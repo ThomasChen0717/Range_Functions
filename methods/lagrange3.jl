@@ -11,6 +11,17 @@ Primary functions:
 =# 
 const TRIN_TABLE = Ref(zeros(Int, 1, 1))
 const TRIN_MAX   = Ref(0)
+const LAGRANGE_ORDER_CACHE = Dict{Tuple{Int, Int, Int}, Vector{Tuple{Int, Int, String}}}()
+
+struct UniformLagrangeGridCache
+    xmin::Float64
+    ymin::Float64
+    step::Float64
+    r::Float64
+    order_index::Matrix{Int}
+    values::Vector{Matrix{Float64}}
+    remainder_terms::Vector{Tuple{Int, Float64}}
+end
 
 function trinomial_table!(nmax::Int)
     nmax <= TRIN_MAX[] && return
@@ -37,6 +48,171 @@ function trinomial(n::Int, k::Int)
     @inbounds return TRIN_TABLE[][n+1, k+1]
 end
 
+function lagrange_orders(max_x::Int, max_y::Int, total_degree::Int)::Vector{Tuple{Int, Int, String}}
+    key = (max_x, max_y, total_degree)
+    return get!(LAGRANGE_ORDER_CACHE, key) do
+        max_x_multiples = div(max_x, 3) + 1
+        max_y_multiples = div(max_y, 3) + 1
+        orders = Tuple{Int, Int, String}[]
+
+        for x_index in 1:max_x_multiples
+            for y_index in 1:max_y_multiples
+                x_order = (x_index - 1) * 3
+                y_order = (y_index - 1) * 3
+                if x_order + y_order > total_degree
+                    continue
+                end
+                push!(orders, (x_index, y_index, monomial_string(x_order, y_order)))
+            end
+        end
+
+        orders
+    end
+end
+
+function build_uniform_lagrange_grid_cache(poly::Polynomial, boxes::Vector{myBox}, degree::Int)
+    isempty(boxes) && return nothing
+
+    first_box = boxes[1]
+    tol = 1e-12
+    if !isapprox(first_box.rx, first_box.ry; atol=tol, rtol=tol)
+        return nothing
+    end
+
+    for box in boxes
+        if !isapprox(box.rx, first_box.rx; atol=tol, rtol=tol) || !isapprox(box.ry, first_box.ry; atol=tol, rtol=tol)
+            return nothing
+        end
+    end
+
+    xmin = minimum(box.x_1 for box in boxes)
+    xmax = maximum(box.x_3 for box in boxes)
+    ymin = minimum(box.y_1 for box in boxes)
+    ymax = maximum(box.y_3 for box in boxes)
+    step = first_box.rx
+
+    nx = round(Int, (xmax - xmin) / step) + 1
+    ny = round(Int, (ymax - ymin) / step) + 1
+
+    if nx <= 0 || ny <= 0
+        return nothing
+    end
+
+    if !isapprox((nx - 1) * step, xmax - xmin; atol=1e-9, rtol=1e-9) || !isapprox((ny - 1) * step, ymax - ymin; atol=1e-9, rtol=1e-9)
+        return nothing
+    end
+
+    max_x_multiples = div(max_x, 3) + 1
+    max_y_multiples = div(max_y, 3) + 1
+    order_index = zeros(Int, max_x_multiples, max_y_multiples)
+    orders = lagrange_orders(max_x, max_y, total_degree)
+
+    values = Matrix{Float64}[]
+    sizehint!(values, length(orders))
+    for (x_index, y_index, _) in orders
+        push!(values, Matrix{Float64}(undef, nx, ny))
+        order_index[x_index, y_index] = length(values)
+    end
+
+    vars = Dict{Symbol,Union{Float64,myInterval}}(:x => 0.0, :y => 0.0)
+    slp = poly.slp
+    for ix in 1:nx
+        vars[:x] = xmin + (ix - 1) * step
+        for iy in 1:ny
+            vars[:y] = ymin + (iy - 1) * step
+            for (x_index, y_index, order) in orders
+                idx = order_index[x_index, y_index]
+                @inbounds values[idx][ix, iy] = evaluate_slp_range(slp, order, vars)
+            end
+        end
+    end
+
+    max_k = degree ÷ 3
+    trinomial_table!(max_k)
+    omega = sqrt(3) / 27 * first_box.rx^3
+    remainder_terms = Tuple{Int, Float64}[]
+    for k in 1:max_k
+        for j in 0:k
+            idx = order_index[k - j + 1, j + 1]
+            if idx == 0
+                continue
+            end
+            push!(remainder_terms, (idx, omega^k * trinomial(k, j)))
+        end
+    end
+
+    return UniformLagrangeGridCache(xmin, ymin, step, first_box.rx, order_index, values, remainder_terms)
+end
+
+@inline function lattice_box_origin(cache::UniformLagrangeGridCache, B::myBox)
+    ix = round(Int, (B.x_1 - cache.xmin) / cache.step) + 1
+    iy = round(Int, (B.y_1 - cache.ymin) / cache.step) + 1
+    return ix, iy
+end
+
+function Lagrange3(cache::UniformLagrangeGridCache, B::myBox)::myInterval
+    ix, iy = lattice_box_origin(cache, B)
+    r = cache.r
+
+    base = cache.values[cache.order_index[1, 1]]
+    @inbounds begin
+        f11 = base[ix, iy]
+        f12 = base[ix, iy + 1]
+        f13 = base[ix, iy + 2]
+        f21 = base[ix + 1, iy]
+        f22 = base[ix + 1, iy + 1]
+        f23 = base[ix + 1, iy + 2]
+        f31 = base[ix + 2, iy]
+        f32 = base[ix + 2, iy + 1]
+        f33 = base[ix + 2, iy + 2]
+
+        c00 = f22
+        c10 = (f32 - f12) / (2*r)
+        c01 = (f23 - f21) / (2*r)
+        c20 = (f32 - 2*f22 + f12) / (2*r^2)
+        c11 = (f33 - f13 - f31 + f11) / (4*r^2)
+        c02 = (f23 - 2*f22 + f21) / (2*r^2)
+        c21 = (f33 - 2*f23 + f13 - f31 + 2*f21 - f11) / (4*r^3)
+        c12 = (f33 - 2*f32 + f31 - f13 + 2*f12 - f11) / (4*r^3)
+        c22 = (f33 - 2*f23 + f13 - 2*f32 + 4*f22 - 2*f12 + f31 - 2*f21 + f11) / (4*r^4)
+
+        U0 = RangeBi2(c00, c10, c01, c20, c11, c02, c21, c12, c22, r)
+
+        U3_alpha = 0.0
+        U3_beta = 0.0
+        for (idx, coeff) in cache.remainder_terms
+            mat = cache.values[idx]
+
+            g11 = mat[ix, iy]
+            g12 = mat[ix, iy + 1]
+            g13 = mat[ix, iy + 2]
+            g21 = mat[ix + 1, iy]
+            g22 = mat[ix + 1, iy + 1]
+            g23 = mat[ix + 1, iy + 2]
+            g31 = mat[ix + 2, iy]
+            g32 = mat[ix + 2, iy + 1]
+            g33 = mat[ix + 2, iy + 2]
+
+            cc00 = g22
+            cc10 = (g32 - g12) / (2*r)
+            cc01 = (g23 - g21) / (2*r)
+            cc20 = (g32 - 2*g22 + g12) / (2*r^2)
+            cc11 = (g33 - g13 - g31 + g11) / (4*r^2)
+            cc02 = (g23 - 2*g22 + g21) / (2*r^2)
+            cc21 = (g33 - 2*g23 + g13 - g31 + 2*g21 - g11) / (4*r^3)
+            cc12 = (g33 - 2*g32 + g31 - g13 + 2*g12 - g11) / (4*r^3)
+            cc22 = (g33 - 2*g23 + g13 - 2*g32 + 4*g22 - 2*g12 + g31 - 2*g21 + g11) / (4*r^4)
+
+            u_alpha, u_beta = RangeBi2(cc00, cc10, cc01, cc20, cc11, cc02, cc21, cc12, cc22, r)
+            term = coeff * max(abs(u_alpha), abs(u_beta))
+            U3_alpha += term
+            U3_beta += term
+        end
+
+        return myInterval(U0[1] - U3_alpha, U0[2] + U3_beta)
+    end
+end
+
 #= 
     evaluate(poly::Polynomial, B::myBox)
 
@@ -57,6 +233,11 @@ function evaluate(poly::Polynomial, B::myBox, sharing::Bool)
     global max_y
     global total_degree
 
+    max_x_multiples = div(max_x, 3) + 1
+    max_y_multiples = div(max_y, 3) + 1
+    orders = lagrange_orders(max_x, max_y, total_degree)
+    vars = Dict{Symbol,Union{Float64,myInterval}}(:x => 0.0, :y => 0.0)
+
     for i in range(1, 3)
         for j in range(1,3)
             pt = get_point(B, i, j)
@@ -67,23 +248,14 @@ function evaluate(poly::Polynomial, B::myBox, sharing::Bool)
                 end
             end
 
-            max_x_multiples = div(max_x, 3) + 1
-            max_y_multiples = div(max_y, 3) + 1  
+            point_derivatives = [zeros(Float64, max_y_multiples) for _ in 1:max_x_multiples]
+            vars[:x] = pt[1]
+            vars[:y] = pt[2]
 
-            point_derivatives = [zeros(Float64, max_y_multiples+ 1) for _ in 1:max_x_multiples + 1]
-
-            for x_index in range(1, max_x_multiples)
-                for y_index in range(1, max_y_multiples)
-                    x_order = (x_index - 1) * 3
-                    y_order = (y_index - 1) * 3
-                    if x_order + y_order > total_degree
-                        continue
-                    end
-                    order = monomial_string(x_order, y_order)
-                    deriv = eval_slp(slp, pt[1], pt[2], order) 
+            for (x_index, y_index, order) in orders
+                    deriv = evaluate_slp_range(slp, order, vars)
                     point_derivatives[x_index][y_index] = deriv
                     total_eval += 1
-                end
             end
 
             total_points += 1
@@ -209,26 +381,55 @@ function Lagrange3(poly::Polynomial, B::myBox, degree::Int; sharing::Bool=true):
     max_k = degree ÷ 3
     trinomial_table!(max_k)
 
-    # build F grid values F[0..2,0..2] where index i corresponds to i-1 in Maple
-    F = zeros(Float64, 3, 3)
+    pt11 = get_point(B, 1, 1)
+    pt12 = get_point(B, 1, 2)
+    pt13 = get_point(B, 1, 3)
+    pt21 = get_point(B, 2, 1)
+    pt22 = get_point(B, 2, 2)
+    pt23 = get_point(B, 2, 3)
+    pt31 = get_point(B, 3, 1)
+    pt32 = get_point(B, 3, 2)
+    pt33 = get_point(B, 3, 3)
 
-    for i in 1:3, j in 1:3
-        pt = get_point(B, i, j)  
+    @assert haskey(derivatives, pt11) "Missing cached derivatives at $pt11. Did you call evaluate(poly, B, sharing=true) first?"
+    @assert haskey(derivatives, pt12) "Missing cached derivatives at $pt12. Did you call evaluate(poly, B, sharing=true) first?"
+    @assert haskey(derivatives, pt13) "Missing cached derivatives at $pt13. Did you call evaluate(poly, B, sharing=true) first?"
+    @assert haskey(derivatives, pt21) "Missing cached derivatives at $pt21. Did you call evaluate(poly, B, sharing=true) first?"
+    @assert haskey(derivatives, pt22) "Missing cached derivatives at $pt22. Did you call evaluate(poly, B, sharing=true) first?"
+    @assert haskey(derivatives, pt23) "Missing cached derivatives at $pt23. Did you call evaluate(poly, B, sharing=true) first?"
+    @assert haskey(derivatives, pt31) "Missing cached derivatives at $pt31. Did you call evaluate(poly, B, sharing=true) first?"
+    @assert haskey(derivatives, pt32) "Missing cached derivatives at $pt32. Did you call evaluate(poly, B, sharing=true) first?"
+    @assert haskey(derivatives, pt33) "Missing cached derivatives at $pt33. Did you call evaluate(poly, B, sharing=true) first?"
 
-        @assert haskey(derivatives, pt) "Missing cached derivatives at $pt. Did you call evaluate(poly, B, sharing=true) first?"
-        
-        F[i, j] = derivatives[pt][1][1]
-    end
+    d11 = derivatives[pt11]
+    d12 = derivatives[pt12]
+    d13 = derivatives[pt13]
+    d21 = derivatives[pt21]
+    d22 = derivatives[pt22]
+    d23 = derivatives[pt23]
+    d31 = derivatives[pt31]
+    d32 = derivatives[pt32]
+    d33 = derivatives[pt33]
 
-    c00 = F[2,2]
-    c10 = (F[3,2] - F[1,2]) / (2*r)
-    c01 = (F[2,3] - F[2,1]) / (2*r)
-    c20 = (F[3,2] - 2*F[2,2] + F[1,2]) / (2*r^2)
-    c11 = (F[3,3] - F[1,3] - F[3,1] + F[1,1]) / (4*r^2)
-    c02 = (F[2,3] - 2*F[2,2] + F[2,1]) / (2*r^2)
-    c21 = (F[3,3] - 2*F[2,3] + F[1,3] - F[3,1] + 2*F[2,1] - F[1,1]) / (4*r^3)
-    c12 = (F[3,3] - 2*F[3,2] + F[3,1] - F[1,3] + 2*F[1,2] - F[1,1]) / (4*r^3)
-    c22 = (F[3,3] - 2*F[2,3] + F[1,3] - 2*F[3,2] + 4*F[2,2] - 2*F[1,2] + F[3,1] - 2*F[2,1] + F[1,1]) / (4*r^4)
+    f11 = d11[1][1]
+    f12 = d12[1][1]
+    f13 = d13[1][1]
+    f21 = d21[1][1]
+    f22 = d22[1][1]
+    f23 = d23[1][1]
+    f31 = d31[1][1]
+    f32 = d32[1][1]
+    f33 = d33[1][1]
+
+    c00 = f22
+    c10 = (f32 - f12) / (2*r)
+    c01 = (f23 - f21) / (2*r)
+    c20 = (f32 - 2*f22 + f12) / (2*r^2)
+    c11 = (f33 - f13 - f31 + f11) / (4*r^2)
+    c02 = (f23 - 2*f22 + f21) / (2*r^2)
+    c21 = (f33 - 2*f23 + f13 - f31 + 2*f21 - f11) / (4*r^3)
+    c12 = (f33 - 2*f32 + f31 - f13 + 2*f12 - f11) / (4*r^3)
+    c22 = (f33 - 2*f23 + f13 - 2*f32 + 4*f22 - 2*f12 + f31 - 2*f21 + f11) / (4*r^4)
 
     U0 = RangeBi2(c00,c10,c01,c20,c11,c02,c21,c12,c22,r)
 
@@ -242,28 +443,25 @@ function Lagrange3(poly::Polynomial, B::myBox, degree::Int; sharing::Bool=true):
             ox = 3*(k-j)
             oy = 3*j
 
-            # compute 3(k-j), 3j derivatives at the 3x3 grid
-            G = zeros(Float64, 3, 3)
+            g11 = get_cached_deriv(d11, ox, oy)
+            g12 = get_cached_deriv(d12, ox, oy)
+            g13 = get_cached_deriv(d13, ox, oy)
+            g21 = get_cached_deriv(d21, ox, oy)
+            g22 = get_cached_deriv(d22, ox, oy)
+            g23 = get_cached_deriv(d23, ox, oy)
+            g31 = get_cached_deriv(d31, ox, oy)
+            g32 = get_cached_deriv(d32, ox, oy)
+            g33 = get_cached_deriv(d33, ox, oy)
 
-            for ii in 1:3, jj in 1:3
-                pt = get_point(B, ii, jj)  # Tuple{Float64,Float64}
-
-                @assert haskey(derivatives, pt) "Missing cached derivatives at $pt. Did you call evaluate(poly, B, sharing=true) first?"
-
-                # ox, oy are multiples of 3; cached at [ox/3+1][oy/3+1]
-                G[ii, jj] = get_cached_deriv(derivatives[pt], ox, oy)
-            end
-
-            # coefficients of biquadratic Lagrange polynomial for this derivative array
-            cc00 = G[2,2]
-            cc10 = (G[3,2] - G[1,2]) / (2*r)
-            cc01 = (G[2,3] - G[2,1]) / (2*r)
-            cc20 = (G[3,2] - 2*G[2,2] + G[1,2]) / (2*r^2)
-            cc11 = (G[3,3] - G[1,3] - G[3,1] + G[1,1]) / (4*r^2)
-            cc02 = (G[2,3] - 2*G[2,2] + G[2,1]) / (2*r^2)
-            cc21 = (G[3,3] - 2*G[2,3] + G[1,3] - G[3,1] + 2*G[2,1] - G[1,1]) / (4*r^3)
-            cc12 = (G[3,3] - 2*G[3,2] + G[3,1] - G[1,3] + 2*G[1,2] - G[1,1]) / (4*r^3)
-            cc22 = (G[3,3] - 2*G[2,3] + G[1,3] - 2*G[3,2] + 4*G[2,2] - 2*G[1,2] + G[3,1] - 2*G[2,1] + G[1,1]) / (4*r^4)
+            cc00 = g22
+            cc10 = (g32 - g12) / (2*r)
+            cc01 = (g23 - g21) / (2*r)
+            cc20 = (g32 - 2*g22 + g12) / (2*r^2)
+            cc11 = (g33 - g13 - g31 + g11) / (4*r^2)
+            cc02 = (g23 - 2*g22 + g21) / (2*r^2)
+            cc21 = (g33 - 2*g23 + g13 - g31 + 2*g21 - g11) / (4*r^3)
+            cc12 = (g33 - 2*g32 + g31 - g13 + 2*g12 - g11) / (4*r^3)
+            cc22 = (g33 - 2*g23 + g13 - 2*g32 + 4*g22 - 2*g12 + g31 - 2*g21 + g11) / (4*r^4)
 
             u_alpha, u_beta = RangeBi2(cc00,cc10,cc01,cc20,cc11,cc02,cc21,cc12,cc22,r)
             term = Omega^k * trinomial(k, j) * max(abs(u_alpha), abs(u_beta))
@@ -275,13 +473,3 @@ function Lagrange3(poly::Polynomial, B::myBox, degree::Int; sharing::Bool=true):
     return myInterval(U0[1] - U3_alpha, U0[2] + U3_beta)
 end
 
-# B = (0.0, 0.0, 1.0)
-# poly_str = "x^4 + 2x^2*y^2 + y^4"
-
-# poly = Polynomial(poly_str)
-# compute_third_derivatives_2D!(poly)
-
-# total_degree = get_total_degree(poly)
-# max_k = total_degree ÷ 3
-
-# print("Range = ", Lagrange3(poly, B, max_k=max_k))
