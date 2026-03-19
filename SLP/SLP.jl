@@ -20,42 +20,72 @@
 			What are the primitive operations in the codelists??
 =# 
 
-# Type alias for numerical values throughout the SLP structure
+include("myInterval.jl")
+
+# Type alias for numerical values throughout evaluation
 # - Float64: standard floating-point numbers for exact computations
 # - myInterval: custom interval type for interval arithmetic computations
 const valueType = Union{Float64, myInterval}
 
+# Type alias for SLP operands
+# - Int: variable or instruction index
+# - String: encoded constant / implicit multiplication literal
+const operandType = Union{Int, String}
+
 #= 
 The SLP (Straight Line Program) struct represents a computational graph
 	that stores mathematical operations and their dependencies in a
-	linear format.  It supports symbolic differentiation by maintaining
+	linear format. It supports symbolic differentiation by maintaining
 	shared storage for original functions and their derivatives.
     
     Fields:
     - vars: Vector storing variables with negative indices (-1 to -∞)
-                 Each tuple contains (index, variable, value)
-				 					?? variable name like x, y?? 
+                 Each tuple contains (index, variable)
 	- codelist: Vector storing computational operations with positive
-		indices (1 to ∞) Each tuple contains (index, operation_symbol,
-		operand1_idx, operand2_idx, result_value)
+		indices (1 to ∞). Each tuple contains
+        (index, operation_symbol, operand1_idx, operand2_idx)
 	- slp_ranges: Dictionary mapping SLP names to their index ranges in
-								?? SLP name ??
-		codelist Enables tracking of original SLP and derivative SLPs
-		within shared storage
+		codelist. Enables tracking of original SLP and derivative SLPs
+		within shared storage.
 			Convention: "" represents the original function f,
 				 "x^ky^l" represents the derivative of f w.r.t to x k
-				 times and y l times. 
+				 times and y l times.
 	- global_deriv_map: Dictionary mapping (instruction_index, variable)
-	  	pairs to their derivative instruction index
+	  	pairs to their derivative instruction index.
 			  Supports efficient retrieval of derivative instructions for
-			  given variables
+			  given variables.
 =#
 struct SLP 
-    vars::Vector{Tuple{Int, Symbol, valueType}}
-    codelist::Vector{Tuple{Int, Symbol, Union{Int, String},
-						Union{Int, String}, valueType}}
+    vars::Vector{Tuple{Int, Symbol}}
+    codelist::Vector{Tuple{Int, Symbol, operandType, operandType}}
     slp_ranges::Dict{String, Tuple{Int, Int}}
-    global_deriv_map::Dict{Tuple{Int, Symbol}, Union{Int, String}}  
+    global_deriv_map::Dict{Tuple{Int, Symbol}, operandType}  
+end
+
+#=
+EvalState stores the per-evaluation runtime data for an SLP.
+
+Fields:
+- var_values: current values assigned to variables in slp.vars order
+- inst_values: current computed values for instructions in slp.codelist order
+               `nothing` means “not computed for this evaluation yet”
+=#
+mutable struct EvalState
+    var_values::Vector{valueType}
+    inst_values::Vector{Union{Nothing, valueType}}
+end
+
+# Construct a fresh evaluation workspace for a given SLP.
+function EvalState(slp::SLP)
+    return EvalState(
+        [myInterval(0.0, 0.0) for _ in 1:length(slp.vars)],
+        [nothing for _ in 1:length(slp.codelist)]
+    )
+end
+
+# Reset instruction cache while preserving allocated buffers.
+function reset!(state::EvalState)
+    fill!(state.inst_values, nothing)
 end
 
 
@@ -126,14 +156,14 @@ end
     - `Int`: Index of the variable in SLP
 =#
 function get_or_add_variable(slp::SLP, var::Symbol)::Int
-    for (idx, val, _) in slp.vars 
+    for (idx, val) in slp.vars 
         if val isa Symbol && val == var
             return idx
         end
     end
     
-    new_idx = isempty(slp.vars) ? -1 : minimum([idx for (idx, _, _) in slp.vars]) - 1
-    push!(slp.vars, (new_idx, var, myInterval(0.0, 0.0)))
+    new_idx = isempty(slp.vars) ? -1 : minimum([idx for (idx, _) in slp.vars]) - 1
+    push!(slp.vars, (new_idx, var))
     return new_idx
 end
 
@@ -146,14 +176,14 @@ end
     - `var::Symbol`: Variable name to be added or retrieved
     
     # Returns
-    - `Int`: Index of the variable in SLP
+    - `Int`: Index of the variable instruction in SLP
 =#
 function create_variable_instruction!(slp::SLP, var::Symbol)::Int
     var_idx = get_or_add_variable(slp, var)
     zero_literal = "@0.0" 
     
-    for (i, instruction) in enumerate(slp.codelist)
-        out_idx, op, left_idx, right_idx, _ = instruction
+    for instruction in slp.codelist
+        out_idx, op, left_idx, right_idx = instruction
         if op == :+ && ((left_idx == var_idx
 					&& right_idx == zero_literal) || 
                        (left_idx == zero_literal && right_idx == var_idx))
@@ -163,6 +193,6 @@ function create_variable_instruction!(slp::SLP, var::Symbol)::Int
     
     new_out_idx = length(slp.codelist) + 1
     push!(slp.codelist,
-		(new_out_idx, :+, var_idx, zero_literal, myInterval(0.0, 0.0)))
+		(new_out_idx, :+, var_idx, zero_literal))
     return new_out_idx
 end

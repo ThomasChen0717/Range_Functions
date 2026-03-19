@@ -226,7 +226,7 @@ function evaluate_boxes(q::PriorityQueue{myBox, Int}, poly::Polynomial, method::
     total_width = 0.0
     for b in keys(q)
         if !sharing
-            reset_global_state!()
+            reset_derivatives()
         end
         if method == "Taylor4"
             range = taylor_interpolation4(poly, b, total_degree; sharing=sharing)

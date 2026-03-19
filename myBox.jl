@@ -27,8 +27,6 @@
     - `y_3`: The upper bound of the y interval
     - `ry`: The radius of the y interval
     - `pts_matrix`: A matrix containing the coordinates of the box points
-    - `FB`: An array of intervals representing the function values at the box points. Nothing represents uninitialized 
-    - `QB`: An array of vectors of functions representing the derivative values at the box points
 =#
 mutable struct myBox
     x::myInterval
@@ -47,8 +45,6 @@ mutable struct myBox
     y_3::Float64
     ry::Float64
     pts_matrix::Array{Tuple{Float64, Float64}}
-    FB::Array{Union{myInterval, Nothing}}
-    QB::Array{Vector{Union{Float64, Function}}}
 end
 
 #=
@@ -93,15 +89,7 @@ function myBox(x::myInterval, y::myInterval; depth::Int=0)::myBox
     max_x_multiples = div(max_x, 3) + 1
     max_y_multiples = div(max_y, 3) + 1
 
-    FB = Array{Union{myInterval, Nothing}}(undef, max_x_multiples + 1, max_y_multiples + 1)
-    fill!(FB, nothing)
-
-    QB = Array{Vector{Union{Float64, Function}}}(undef, max_x_multiples + 1, max_y_multiples + 1)
-    for i in 1:(max_x_multiples + 1), j in 1:(max_y_multiples + 1)
-        QB[i,j] = []
-    end
-
-    return myBox(x, y, depth, [],[],[],[], x_1, x_2, x_3,rx, y_1, y_2, y_3, ry, pts_matrix, FB, QB)
+    return myBox(x, y, depth, [],[],[],[], x_1, x_2, x_3,rx, y_1, y_2, y_3, ry, pts_matrix)
 end
 
 

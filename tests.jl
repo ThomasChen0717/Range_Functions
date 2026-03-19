@@ -317,22 +317,10 @@ function analyze(poly_str::String, midpoint_x::Float64, midpoint_y::Float64, met
         
         try
             real_interval = uniform_sample_range(box, poly_lagrange)
-
-            reset_derivatives()
-            fill!(box.FB, nothing)
-            fill!(box.QB, [])
     
             interval1 = method_interval(poly_lagrange, poly_taylor, box, method1)
-
-            reset_derivatives()
-            fill!(box.FB, nothing)
-            fill!(box.QB, [])
             
             interval2 = method_interval(poly_lagrange, poly_taylor, box, method2)
-
-            reset_derivatives()
-            fill!(box.FB, nothing)
-            fill!(box.QB, [])
             
             logd1 = compute_logD(interval1, real_interval)
             logd2 = compute_logD(interval2, real_interval)
@@ -413,16 +401,14 @@ end
 # their enclosures alongside a Monte‑Carlo reference interval.
 function test_intervals_at_r(poly_str::String, midpoint_x::Float64, midpoint_y::Float64; radii::Vector{Float64}=[0.2, 0.1, 0.05])
     poly_lagrange = Polynomial(poly_str)
-    poly_taylor = Polynomial(poly_str)
-    poly_hermite = Polynomial(poly_str)
+    poly = Polynomial(poly_str)
 
     global max_x, max_y, total_degree
     max_x, max_y = get_max_order(poly_lagrange, :x), get_max_order(poly_lagrange, :y)
     total_degree = get_total_degree(poly_lagrange)
 
     compute_third_derivatives_2D!(poly_lagrange)
-    compute_all_derivatives!(poly_taylor)
-    compute_all_derivatives!(poly_hermite)
+    compute_all_derivatives!(poly)
 
     results = Tuple{Float64, myInterval, myInterval, myInterval}[]
 
@@ -434,46 +420,17 @@ function test_intervals_at_r(poly_str::String, midpoint_x::Float64, midpoint_y::
 
         real_interval = uniform_sample_range(box, poly_lagrange)
 
-        reset_derivatives()
-        fill!(box.FB, nothing)
-        fill!(box.QB, [])
-        poly_lagrange = Polynomial(poly_str)
-        compute_third_derivatives_2D!(poly_lagrange)
-
-        # lagrange_interval = lagrange_range_function(poly_lagrange, box, total_degree, "S", 6)
         lagrange_interval = Lagrange3(poly_lagrange, box, total_degree)
 
-        reset_derivatives()
-        fill!(box.FB, nothing)
-        fill!(box.QB, [])
+        taylor_interval_3 = taylor_interpolation3(poly, box, total_degree)
 
-        taylor_interval_3 = taylor_interpolation3(poly_taylor, box, total_degree)
+        taylor_interval_2 = taylor_interpolation2(poly, box, total_degree)
 
-        reset_derivatives()
-        fill!(box.FB, nothing)
-        fill!(box.QB, [])
+        taylor_interval_4 = taylor_interpolation4(poly, box, total_degree)
 
-        poly_taylor = Polynomial(poly_str)
-        compute_all_derivatives!(poly_taylor)
+        hermite_interval = hermite4(poly, box, total_degree)
+    
 
-
-        taylor_interval_2 = taylor_interpolation2(poly_taylor, box, total_degree)
-       
-        reset_derivatives()
-        fill!(box.FB, nothing)
-        fill!(box.QB, [])
-        poly_taylor = Polynomial(poly_str)
-        compute_all_derivatives!(poly_taylor)
-
-
-        taylor_interval_4 = taylor_interpolation4(poly_taylor, box, total_degree)
-       
-        reset_derivatives()
-        fill!(box.FB, nothing)
-        fill!(box.QB, [])
-
-        hermite_interval = hermite4(poly_hermite, box, total_degree)
-        # hermite_interval = hermite4(poly_str, box_center, total_degree)
         println("r = $(r)")
         println("real_interval = $(real_interval)")
         println("lagrange_interval = $(lagrange_interval)")
@@ -553,11 +510,9 @@ function compare_methods(poly_str::String, box::myBox, method1::String, method2:
             
             try
                 width1 = method_width(poly_lagrange, poly_taylor, subbox, method1)
-                reset_derivatives()
-
-                width2 = method_width(poly_lagrange, poly_taylor, subbox, method2)
-                reset_derivatives()
                 
+                width2 = method_width(poly_lagrange, poly_taylor, subbox, method2)
+
                 if width2 > 0
                     ratio = width1 / width2
                 else

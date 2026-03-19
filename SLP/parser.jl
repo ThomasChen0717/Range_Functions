@@ -30,6 +30,10 @@
 				YACC or LEX to automatically generate these codes.
 =# 
 
+include("ASTTypes.jl")
+include("myInterval.jl")
+include("SLP.jl")
+
 # Shortcut for zero interval
 zero_interval = myInterval(0.0,0.0)
 
@@ -312,8 +316,8 @@ function ast_to_slp(root::Expr)::SLP
     empty!(INSTRUCTION_HASH)
     
     var_dict= Dict{Symbol,Int}()
-    vars = Vector{Tuple{Int, Symbol, valueType}}()
-    codeList = Vector{Tuple{Int, Symbol, Union{Int, String}, Union{Int, String}, valueType}}()
+    vars = Vector{Tuple{Int, Symbol}}()
+    codeList = Vector{Tuple{Int, Symbol, operandType, operandType}}()
 
     nextVarIndex = Ref(-1)  
     nextTempIndex  = Ref(1)
@@ -325,7 +329,7 @@ function ast_to_slp(root::Expr)::SLP
             idx = nextVarIndex[]
             nextVarIndex[] -= 1
             var_dict[var] = idx
-            push!(vars, (idx, var, zero_interval))
+            push!(vars, (idx, var))
             return idx
         end
     end
@@ -350,7 +354,7 @@ function ast_to_slp(root::Expr)::SLP
         # Create new instruction
         out_idx = nextTempIndex[]
         nextTempIndex[] += 1
-        push!(codeList, (out_idx, op, left_idx, right_idx, zero_interval))
+        push!(codeList, (out_idx, op, left_idx, right_idx))
         
         # Add to hash
         INSTRUCTION_HASH[instruction_key] = out_idx
@@ -523,10 +527,10 @@ function ast_to_slp(root::Expr)::SLP
     
     if isempty(codeList)
         if !isempty(vars) && build_result isa Int
-            push!(codeList, (1, :+, build_result, "@0.0", zero_interval))
+            push!(codeList, (1, :+, build_result, "@0.0"))
             slp_ranges[""] = (1, 1)
         elseif build_result isa String && startswith(build_result, "@")
-            push!(codeList, (1, :+, "@0.0", build_result, zero_interval))
+            push!(codeList, (1, :+, "@0.0", build_result))
             slp_ranges[""] = (1, 1)
         else
             error("Unexpected empty codelist case")
@@ -552,8 +556,8 @@ end
 =#
 function parse_poly(poly::String)::SLP
     if isempty(strip(poly))
-        vars = Vector{Tuple{Int, Symbol, valueType}}()
-        codeList = Vector{Tuple{Int, Symbol, Union{Int, String}, Union{Int, String}, valueType}}()
+        vars = Vector{Tuple{Int, Symbol}}()
+        codeList = Vector{Tuple{Int, Symbol, operandType, operandType}}()
         slp_ranges = Dict{String, Tuple{Int, Int}}("" => (1, 0))
         return SLP(vars, codeList, slp_ranges, Dict{Tuple{Int, Symbol}, Union{Int, String}}())
     end

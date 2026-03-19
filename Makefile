@@ -3,6 +3,7 @@ MAIN = range_funcs.jl
 INPUT ?= input.txt
 METHOD1 ?= Lagrange3
 METHOD2 ?= Taylor4
+D ?= 1024
 
 .PHONY: intervals analyze compare default
 
@@ -15,4 +16,4 @@ analyze:
 	$(JULIA) $(MAIN) analyze $(METHOD1) $(METHOD2) $(INPUT)
 
 compare:
-	$(JULIA) $(MAIN) compare $(METHOD1) $(METHOD2) $(INPUT)
+	$(JULIA) $(MAIN) compare $(METHOD1) $(METHOD2) $(D) $(INPUT)

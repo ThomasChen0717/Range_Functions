@@ -9,6 +9,11 @@
 		What are the primitive operations in the codelists??
 =# 
 
+include("polynomial.jl")
+include("SLP.jl")
+include("myInterval.jl")
+include("utils.jl")
+
 COEFF_PARSE_CACHE = Dict{String, Tuple{Float64, Int}}()
 
 
@@ -101,7 +106,7 @@ function get_or_compute_derivative(poly::Polynomial,
 
     if idx > 0 && idx <= length(poly.slp.codelist)
         instruction = poly.slp.codelist[idx]
-        out_idx, op, left_idx, right_idx, _ = instruction
+        out_idx, op, left_idx, right_idx = instruction
         
         if op == :+
             left_deriv_idx = get_or_compute_derivative(poly, left_idx, var)
@@ -188,7 +193,7 @@ function create_derivative_mapping(slp::SLP, diff_var::Symbol)
         slp.global_deriv_map = Dict{Tuple{Int, Symbol}, Union{Int, String}}()
     end
     
-    for (idx, val, _) in slp.vars
+    for (idx, val) in slp.vars
         key = (idx, diff_var)
         if !haskey(slp.global_deriv_map, key)
             if val isa Symbol && val == diff_var
@@ -312,7 +317,7 @@ function add_optimized_instruction!(slp::SLP, op::Symbol, left_idx::Union{Int, S
     end
 
     new_out_idx = length(slp.codelist) + 1
-    push!(slp.codelist, (new_out_idx, op, left_idx, right_idx, myInterval(0.0, 0.0)))
+    push!(slp.codelist, (new_out_idx, op, left_idx, right_idx))
 
     INSTRUCTION_HASH[instruction_key] = new_out_idx
     if op == :+ || op == :*
@@ -384,7 +389,7 @@ function compute_derivative_slp!(poly::Polynomial, var::Symbol,
         end
 
         instruction = poly.slp.codelist[i]
-        out_idx, op, left_idx, right_idx, _ = instruction
+        out_idx, op, left_idx, right_idx = instruction
         
         if op == :+ 
             left_deriv_idx = get_or_compute_derivative(poly, left_idx, var)
@@ -471,15 +476,15 @@ function compute_derivative_slp!(poly::Polynomial, var::Symbol,
                 if last_instruction_idx < start_idx
                     if const_val !== nothing
                         dummy_idx = length(poly.slp.codelist) + 1
-                        push!(poly.slp.codelist, (dummy_idx, :+, "@$(const_val)", "@0.0", myInterval(const_val, const_val)))
+                        push!(poly.slp.codelist, (dummy_idx, :+, "@$(const_val)", "@0.0"))
                         poly.slp.slp_ranges[new_key] = (dummy_idx, dummy_idx)
                     else
                         if final_result_idx isa String
                             dummy_idx = length(poly.slp.codelist) + 1
-                            push!(poly.slp.codelist, (dummy_idx, :+, final_result_idx, "@0.0", myInterval(0.0, 0.0)))
+                            push!(poly.slp.codelist, (dummy_idx, :+, final_result_idx, "@0.0"))
                             poly.slp.slp_ranges[new_key] = (dummy_idx, dummy_idx)
                         else
-                            for (idx, val, _) in poly.slp.vars
+                            for (idx, val) in poly.slp.vars
                                 if idx == final_result_idx && val isa Symbol
                                     dummy_idx = create_variable_instruction!(poly.slp, val)
                                     poly.slp.slp_ranges[new_key] = (dummy_idx, dummy_idx)

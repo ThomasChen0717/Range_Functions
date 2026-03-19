@@ -96,13 +96,15 @@ function main()
         println("No command specified. Using command 'intervals' and input file 'input.txt'.")
     elseif ARGS[1] == "compare"
         cmd = "compare"
-        if length(ARGS) < 3
-            error("Usage: compare METHOD1 METHOD2 [input files...]")
+        if length(ARGS) < 4
+            error("Usage: compare METHOD1 METHOD2 D [input files...]")
         end
         method1 = ARGS[2]
         method2 = ARGS[3]
-        if length(ARGS) >= 4
-            input_files = ARGS[4:end]
+        d = parse(Int, ARGS[4])
+
+        if length(ARGS) >= 5
+            input_files = ARGS[5:end]
         else
             input_files = ["input.txt"]
         end
@@ -171,7 +173,7 @@ function main()
             elseif cmd == "analyze"
                 analyze(poly_str, midpoint_x, midpoint_y, method1, method2)
             elseif cmd == "compare"
-                ratio_matrix = compare_methods(poly_str, B, method1, method2, 1024)
+                ratio_matrix = compare_methods(poly_str, B, method1, method2, d)
                 p = create_visualization(ratio_matrix, B, poly_str, method1, method2)
                 mkpath("imgs")
                 poly_tag = replace(poly_str[1:min(20, length(poly_str))], r"[^a-zA-Z0-9]" => "_")
@@ -181,69 +183,6 @@ function main()
             end
         end
     end
-
-    # table_rows = NamedTuple{(:curve, :min_ms, :median_ms, :mean_ms, :memory_mb, :efficacy), Tuple{String, Float64, Float64, Float64, Float64, Float64}}[]
-    # for (i, poly) in enumerate(polys)
-    #     polynomial = Polynomial(poly)
-
-    #     max_x, max_y = get_max_order(polynomial, :x), get_max_order(polynomial, :y)
-    #     total_degree = get_total_degree(polynomial)
-
-    #     compute_all_derivatives!(polynomial)
-    #     #compute_third_derivatives_2D!(polynomial)
-
-
-    #     if i == 1
-    #         description = "Clover4"
-    #     elseif i == 2
-    #         description = "Clover5"
-    #     elseif i == 3
-    #         description = "Clover8"
-    #     elseif i == 4
-    #         description = "Grass"
-    #     end
-
-    #     box_count = 1024
-
-    #     q = uniform_split(B, box_count)
-
-    #     total_width = evaluate_boxes(q, polynomial, "Lagrange3"; sharing=false)
-
-    #     efficacy = total_width / box_count
-
-    #     reset_derivatives()
-
-    #     benchmark_result = @benchmark evaluate_boxes($q, $polynomial, "Lagrange3"; sharing=false) teardown=(reset_derivatives())  
-
-    #     min_ms    = minimum(benchmark_result.times) / 1e6
-    #     median_ms = median(benchmark_result.times) / 1e6
-    #     mean_ms   = mean(benchmark_result.times) / 1e6
-    #     memory_mb = benchmark_result.memory / 1024^2
-
-    #     println(description)
-
-    #     push!(table_rows, (; curve=description, min_ms, median_ms, mean_ms, memory_mb, efficacy))
-
-    #     display(benchmark_result)
-
-    #     println("Total width: $total_width")
-    #     println("Efficacy: $efficacy")
-    # end
-
-    # println()
-    # println(rpad("Curve", 12), rpad("Method", 10), rpad("Min (ms)", 12),
-    #         rpad("Median (ms)", 14), rpad("Mean (ms)", 12), rpad("Memory (MB)", 13), rpad("Efficacy", 12))
-
-    # for row in table_rows
-    #     println(rpad(row.curve, 12),
-    #             rpad("Lagrange3", 10),
-    #             @sprintf("%-11.4f", row.min_ms),
-    #             @sprintf("%-13.4f", row.median_ms),
-    #             @sprintf("%-11.4f", row.mean_ms),
-    #             @sprintf("%-12.4f", row.memory_mb),
-    #             @sprintf("%-12.4f", row.efficacy))
-    # end
-    # println()
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

@@ -82,18 +82,19 @@ Generates a heatmap comparing the ratio of interval widths between two methods o
 Method Arguments default values:
 - `METHOD1`: `Lagrange3`
 - `METHOD2`: `Hermite4`
+- `D`: `1024`
 
 ```bash
-julia range_funcs.jl compare <METHOD1> <METHOD2> [input.txt]
+julia range_funcs.jl compare <METHOD1> <METHOD2> <D> [input.txt]
 ```
 or 
 ```bash
-make compare [METHOD1=Lagrange3] [METHOD2=Hermite4] [INPUT=input.txt]
+make compare [METHOD1=Lagrange3] [METHOD2=Hermite4] [D=1024] [INPUT=input.txt]
 ```
 
 **Example:**
 ```bash
-julia range_funcs.jl compare Lagrange3 Hermite4 input.txt
+julia range_funcs.jl compare Lagrange3 Hermite4 1024 input.txt
 ```
 
 ## Input File Format

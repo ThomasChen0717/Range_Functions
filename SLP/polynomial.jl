@@ -5,6 +5,9 @@
     @description: Polynomial Struct
 =# 
 
+include("ASTTypes.jl")
+include("parser.jl")
+include("SLP.jl")
 
 #=
     Polynomial struct represents a polynomial abstractly
@@ -34,9 +37,9 @@ end
 =#
 function Polynomial(poly_string::String)::Polynomial
     if isempty(strip(poly_string))
-        vars = Vector{Tuple{Int, Symbol, valueType}}()
-        codeList = Vector{Tuple{Int, Symbol, Union{Int, String},
-				Union{Int, String}, valueType}}()
+        vars = Vector{Tuple{Int, Symbol}}()
+        codeList = Vector{Tuple{Int, Symbol, operandType,
+				operandType}}()
         slp_ranges = Dict{String, Tuple{Int, Int}}("" => (1, 0))
         slp = SLP(vars, codeList, slp_ranges, Dict{Tuple{Int, Symbol},
 				Union{Int, String}}())
